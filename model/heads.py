@@ -2,6 +2,8 @@
 Task-specific heads for segmentation, detection, and classification.
 """
 
+from typing import Dict, List, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +16,13 @@ class SegmentationHead(nn.Module):
     Output: 4-class segmentation mask (background, pan, stirrer, inlet_pipes)
     """
 
-    def __init__(self, in_channels=256, num_classes=1, input_size=(64, 64), output_size=(256, 256)):
+    def __init__(
+        self,
+        in_channels: int = 256,
+        num_classes: int = 1,
+        input_size: Tuple[int, int] = (64, 64),
+        output_size: Tuple[int, int] = (256, 256)
+    ) -> None:
         """
         Args:
             in_channels: Input feature channels (from FPN, default: 256)
@@ -37,7 +45,7 @@ class SegmentationHead(nn.Module):
         # Final classification layer
         self.classifier = nn.Conv2d(64, num_classes, kernel_size=1)
 
-    def forward(self, p2):
+    def forward(self, p2: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through segmentation head.
 
@@ -62,7 +70,12 @@ class ClassificationHead(nn.Module):
     Output: Class logits (classification)
     """
 
-    def __init__(self, in_channels=2048, num_classes=10, hidden_dim=512):
+    def __init__(
+        self,
+        in_channels: int = 2048,
+        num_classes: int = 10,
+        hidden_dim: int = 512
+    ) -> None:
         """
         Args:
             in_channels: Input feature channels from C5 (default: 2048)
@@ -80,7 +93,7 @@ class ClassificationHead(nn.Module):
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         self.fc3 = nn.Linear(hidden_dim // 2, num_classes)  # Class logits
 
-    def forward(self, c5):
+    def forward(self, c5: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through classification head.
 
@@ -108,7 +121,7 @@ class DetectionHead(nn.Module):
     Output: Bounding boxes + class labels (pan, stirrer, inlet_pipes)
     """
 
-    def __init__(self, in_channels=256, num_classes=3):
+    def __init__(self, in_channels: int = 256, num_classes: int = 3) -> None:
         """
         Args:
             in_channels: Input feature channels from FPN (default: 256)
@@ -136,7 +149,12 @@ class DetectionHead(nn.Module):
         # Center-ness branch (for FCOS-style)
         self.centerness_head = nn.Conv2d(in_channels, 1, 1)
 
-    def forward(self, p3, p4, p5):
+    def forward(
+        self,
+        p3: torch.Tensor,
+        p4: torch.Tensor,
+        p5: torch.Tensor
+    ) -> Dict[str, List[torch.Tensor]]:
         """
         Forward pass through detection head.
 

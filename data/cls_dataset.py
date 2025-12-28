@@ -4,8 +4,9 @@ Loads images organized by score folders.
 """
 
 import os
+from typing import Dict, Optional, Any
+
 import torch
-from torchvision import transforms
 from .base_dataset import BaseDataset
 
 
@@ -27,8 +28,15 @@ class ClassificationDataset(BaseDataset):
                     ...
     """
 
-    def __init__(self, data_root, split='train', transform=None, val_split=0.2,
-                 random_seed=42, image_size=256):
+    def __init__(
+        self,
+        data_root: str,
+        split: str = 'train',
+        transform: Optional[Any] = None,
+        val_split: float = 0.2,
+        random_seed: int = 42,
+        image_size: int = 256
+    ) -> None:
         """
         Args:
             data_root: Root directory containing 'classification' folder
@@ -82,10 +90,19 @@ class ClassificationDataset(BaseDataset):
         # Split into train/val using stratified splitting to maintain class balance
         self.samples = self._split_data_stratified(all_samples, all_labels)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a sample from the dataset.
+
+        Args:
+            idx: Sample index
+
+        Returns:
+            Dictionary with image, class_label, class_label_str, and task_type
+        """
         img_path, gt_label_str, class_idx = self.samples[idx]
 
         # Load image using base class method

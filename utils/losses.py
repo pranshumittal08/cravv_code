@@ -2,6 +2,8 @@
 Loss functions for multi-task learning.
 """
 
+from typing import Dict, List, Optional, Tuple, Any
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,24 +17,37 @@ class MultiTaskLoss(nn.Module):
     L_total = weight_seg * L_seg + weight_det * L_det + weight_cls * L_cls
     """
 
-    def __init__(self, weight_seg=1.0, weight_det=1.0, weight_cls=0.5):
+    def __init__(
+        self,
+        weight_seg: float = 1.0,
+        weight_det: float = 1.0,
+        weight_cls: float = 0.5,
+        fpn_strides: Tuple[int, ...] = (8, 16, 32)
+    ) -> None:
         """
         Args:
             weight_seg: Weight for segmentation loss (default: 1.0)
             weight_det: Weight for detection loss (default: 1.0)
             weight_cls: Weight for classification loss (default: 0.5)
+            fpn_strides: Feature map strides for each FPN level (default: (8, 16, 32))
         """
         super(MultiTaskLoss, self).__init__()
         self.weight_seg = weight_seg
         self.weight_det = weight_det
         self.weight_cls = weight_cls
+        self.fpn_strides = fpn_strides
 
         # Loss functions
         # Use BCE per class for segmentation (binary cross-entropy for each class)
         self.seg_loss_fn = nn.BCEWithLogitsLoss()
         self.cls_loss_fn = nn.CrossEntropyLoss()
 
-    def compute_seg_loss(self, seg_logits, seg_mask, num_classes=4):
+    def compute_seg_loss(
+        self,
+        seg_logits: torch.Tensor,
+        seg_mask: torch.Tensor,
+        num_classes: int = 4
+    ) -> torch.Tensor:
         """
         Compute segmentation loss using Binary Cross-Entropy.
 
@@ -53,7 +68,14 @@ class MultiTaskLoss(nn.Module):
 
         return seg_loss
 
-    def compute_det_loss(self, det_outputs, boxes=None, labels=None, targets=None, image_size=256):
+    def compute_det_loss(
+        self,
+        det_outputs: Dict[str, List[torch.Tensor]],
+        boxes: Optional[List[torch.Tensor]] = None,
+        labels: Optional[List[torch.Tensor]] = None,
+        targets: Optional[Dict[str, Any]] = None,
+        image_size: int = 256
+    ) -> torch.Tensor:
         """
         Compute FCOS-style detection loss with proper ground truth matching.
 
@@ -73,8 +95,8 @@ class MultiTaskLoss(nn.Module):
             labels = targets.get('labels', labels)
 
         # FCOS uses Focal Loss for classification
-        # Strides for each scale: P3=8, P4=16, P5=32
-        strides = [8, 16, 32]
+        # Use configurable strides for each scale: P3, P4, P5
+        strides = self.fpn_strides
 
         total_cls_loss = 0
         total_reg_loss = 0
@@ -192,7 +214,14 @@ class MultiTaskLoss(nn.Module):
 
         return det_loss
 
-    def compute_cls_loss(self, cls_pred, cls_target, use_focal=True, gamma=2.0, alpha=0.25):
+    def compute_cls_loss(
+        self,
+        cls_pred: torch.Tensor,
+        cls_target: torch.Tensor,
+        use_focal: bool = True,
+        gamma: float = 2.0,
+        alpha: float = 0.25
+    ) -> torch.Tensor:
         """
         Compute classification loss using Focal Loss (sigmoid-based, multi-label style).
         Good for imbalanced classes.
@@ -214,7 +243,11 @@ class MultiTaskLoss(nn.Module):
         else:
             return self.cls_loss_fn(cls_pred, cls_target)
 
-    def forward(self, outputs, targets):
+    def forward(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        targets: Dict[str, Any]
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Compute total multi-task loss.
 

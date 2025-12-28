@@ -4,6 +4,8 @@ Creates a top-down pathway with lateral connections to generate
 multi-scale features with uniform channel dimension.
 """
 
+from typing import List, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,7 +19,11 @@ class FPN(nn.Module):
     pyramid features [P2, P3, P4, P5] with uniform 256 channels.
     """
 
-    def __init__(self, in_channels_list=[256, 512, 1024, 2048], out_channels=256):
+    def __init__(
+        self,
+        in_channels_list: List[int] = [256, 512, 1024, 2048],
+        out_channels: int = 256
+    ) -> None:
         """
         Args:
             in_channels_list: List of input channel dimensions [C2, C3, C4, C5]
@@ -42,7 +48,7 @@ class FPN(nn.Module):
         # Initialize weights
         self._initialize_weights()
 
-    def _initialize_weights(self):
+    def _initialize_weights(self) -> None:
         """Initialize FPN weights."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -51,7 +57,13 @@ class FPN(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, c2, c3, c4, c5):
+    def forward(
+        self,
+        c2: torch.Tensor,
+        c3: torch.Tensor,
+        c4: torch.Tensor,
+        c5: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass through FPN.
 

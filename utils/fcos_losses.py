@@ -3,12 +3,18 @@ FCOS-style loss computation utilities.
 Handles proper matching of predictions to ground truth boxes.
 """
 
+from typing import Tuple
+
 import torch
 import torch.nn.functional as F
-import math
 
 
-def compute_centerness_target(l, t, r, b):
+def compute_centerness_target(
+    l: torch.Tensor,
+    t: torch.Tensor,
+    r: torch.Tensor,
+    b: torch.Tensor
+) -> torch.Tensor:
     """
     Compute centerness target for FCOS.
 
@@ -27,9 +33,14 @@ def compute_centerness_target(l, t, r, b):
     return centerness
 
 
-def assign_targets_to_locations(feature_map_size, gt_boxes, gt_labels,
-                                stride, image_size=256,
-                                positive_threshold=0.0, negative_threshold=float('inf')):
+def assign_targets_to_locations(
+    feature_map_size: Tuple[int, int],
+    gt_boxes: torch.Tensor,
+    gt_labels: torch.Tensor,
+    stride: int,
+    image_size: int = 256,
+    negative_threshold: float = float('inf')
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Assign ground truth boxes to feature map locations (FCOS-style).
 
@@ -39,7 +50,6 @@ def assign_targets_to_locations(feature_map_size, gt_boxes, gt_labels,
         gt_labels: Ground truth labels, shape (N,)
         stride: Feature map stride (8, 16, or 32)
         image_size: Input image size (default: 256)
-        positive_threshold: Minimum distance to be positive (default: 0.0)
         negative_threshold: Maximum distance to be negative (default: inf)
 
     Returns:
@@ -152,7 +162,13 @@ def assign_targets_to_locations(feature_map_size, gt_boxes, gt_labels,
     return cls_targets, reg_targets, centerness_targets, positive_mask
 
 
-def compute_focal_loss(pred_logits, target, alpha=0.25, gamma=2.0, reduction='mean'):
+def compute_focal_loss(
+    pred_logits: torch.Tensor,
+    target: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 0.0,
+    reduction: str = 'mean'
+) -> torch.Tensor:
     """
     Compute Focal Loss for classification (FCOS-style).
     Computes loss on all samples (positive and negative).

@@ -2,12 +2,19 @@
 Evaluation metrics for each task with per-class breakdowns.
 """
 
+from typing import Dict, List, Optional, Any, Union
+
 import torch
 import numpy as np
 from collections import defaultdict
 
 
-def compute_seg_metrics(pred_mask, gt_mask, num_classes=4, class_names=None):
+def compute_seg_metrics(
+    pred_mask: torch.Tensor,
+    gt_mask: torch.Tensor,
+    num_classes: int = 4,
+    class_names: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """
     Compute segmentation metrics (mIoU) with per-class breakdown.
 
@@ -25,9 +32,6 @@ def compute_seg_metrics(pred_mask, gt_mask, num_classes=4, class_names=None):
         if pred_mask.shape[1] == 1:
             # Binary segmentation: threshold sigmoid output
             pred_mask = (torch.sigmoid(pred_mask) > 0.5).squeeze(1).long()
-        else:
-            # Multi-class: use argmax
-            pred_mask = torch.argmax(pred_mask, dim=1)
 
     pred_mask = pred_mask.cpu().numpy()
     gt_mask = gt_mask.cpu().numpy()
@@ -66,7 +70,10 @@ def compute_seg_metrics(pred_mask, gt_mask, num_classes=4, class_names=None):
     }
 
 
-def compute_iou(box1, box2):
+def compute_iou(
+    box1: Union[List[float], np.ndarray],
+    box2: Union[List[float], np.ndarray]
+) -> float:
     """
     Compute IoU between two boxes in [cx, cy, w, h] format.
     """
@@ -99,9 +106,16 @@ def compute_iou(box1, box2):
     return 0.0
 
 
-def compute_det_metrics(pred_boxes, pred_labels, pred_scores,
-                        gt_boxes, gt_labels,
-                        num_classes=3, iou_threshold=0.5, class_names=None):
+def compute_det_metrics(
+    pred_boxes: List[np.ndarray],
+    pred_labels: List[np.ndarray],
+    pred_scores: List[np.ndarray],
+    gt_boxes: List[np.ndarray],
+    gt_labels: List[np.ndarray],
+    num_classes: int = 3,
+    iou_threshold: float = 0.5,
+    class_names: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """
     Compute detection metrics (mAP@0.5) with per-class breakdown.
 
@@ -248,7 +262,11 @@ def compute_det_metrics(pred_boxes, pred_labels, pred_scores,
     }
 
 
-def compute_cls_metrics(pred_logits, gt_labels, class_names=None):
+def compute_cls_metrics(
+    pred_logits: Union[torch.Tensor, np.ndarray],
+    gt_labels: Union[torch.Tensor, np.ndarray],
+    class_names: Optional[Dict[int, str]] = None
+) -> Dict[str, Any]:
     """
     Compute classification metrics (accuracy) with per-class breakdown.
 

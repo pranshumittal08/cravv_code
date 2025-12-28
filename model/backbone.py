@@ -3,9 +3,12 @@ ResNet-50 Backbone for feature extraction.
 Extracts intermediate features at different scales: C2, C3, C4, C5.
 """
 
+from typing import Tuple
+
 import torch
 import torch.nn as nn
 import torchvision.models as models
+from torchvision.models import ResNet50_Weights
 
 
 class ResNetBackbone(nn.Module):
@@ -19,11 +22,12 @@ class ResNetBackbone(nn.Module):
         C5: 2048 channels, 1/32 resolution
     """
 
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained: bool = True) -> None:
         super(ResNetBackbone, self).__init__()
 
-        # Load pretrained ResNet-50
-        resnet = models.resnet50(pretrained=pretrained)
+        # Load pretrained ResNet-50 using new weights API
+        weights = ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
+        resnet = models.resnet50(weights=weights)
 
         # Extract layers for feature extraction
         self.conv1 = resnet.conv1
@@ -37,7 +41,7 @@ class ResNetBackbone(nn.Module):
         self.layer3 = resnet.layer3  # C4: 1024 channels
         self.layer4 = resnet.layer4  # C5: 2048 channels
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass through ResNet-50.
 

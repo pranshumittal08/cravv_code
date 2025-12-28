@@ -6,8 +6,11 @@ Loads images and bounding box annotations from COCO JSON.
 import os
 import json
 import random
+from typing import Dict, List, Any, Optional, Tuple
+
 import torch
 from torchvision import transforms
+import torchvision.transforms.functional as TF
 from .base_dataset import BaseDataset
 
 
@@ -24,8 +27,15 @@ class DetectionDataset(BaseDataset):
             _annotations.coco.json
     """
 
-    def __init__(self, data_root, split='train', transform=None, val_split=0.2,
-                 random_seed=42, image_size=256):
+    def __init__(
+        self,
+        data_root: str,
+        split: str = 'train',
+        transform: Optional[Any] = None,
+        val_split: float = 0.2,
+        random_seed: int = 42,
+        image_size: int = 256,
+    ) -> None:
         """
         Args:
             data_root: Root directory containing 'detection' folder
@@ -35,16 +45,24 @@ class DetectionDataset(BaseDataset):
             random_seed: Random seed for reproducible splitting (default: 42)
             image_size: Target image size (default: 256)
         """
-        # Initialize base class
+        # Initialize base class with transform=None (we handle transforms ourselves)
         task_data_root = os.path.join(data_root, 'detection')
         super(DetectionDataset, self).__init__(
             data_root=task_data_root,
             split=split,
-            transform=transform,
+            transform=None,  # We'll handle transforms in __getitem__
             val_split=val_split,
             random_seed=random_seed,
             image_size=image_size
         )
+
+        # Store flip probability for training
+        self.flip_prob = 0.5 if split == 'train' else 0.0
+
+        # Color jitter for training
+        self.color_jitter = transforms.ColorJitter(
+            brightness=0.2, contrast=0.2, saturation=0.2
+        ) if split == 'train' else None
 
         # Setup task-specific paths
         self.images_dir = os.path.join(self.data_root, 'images')
@@ -85,10 +103,64 @@ class DetectionDataset(BaseDataset):
         all_image_ids = sorted(list(self.image_id_to_info.keys()))
         self.image_ids = self._split_data(all_image_ids)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.image_ids)
 
-    def __getitem__(self, idx):
+    def _apply_paired_transforms(
+        self,
+        image,
+        boxes: List[List[float]]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply transforms to both image and bounding boxes consistently.
+
+        Args:
+            image: PIL Image
+            boxes: List of [cx, cy, w, h] in normalized coordinates
+
+        Returns:
+            image: Transformed tensor
+            boxes: Transformed boxes tensor
+        """
+        # 1. Resize image
+        image = TF.resize(image, (self.image_size, self.image_size))
+
+        # 2. Random horizontal flip - same decision for both image and boxes
+        do_flip = self.split == 'train' and random.random() < self.flip_prob
+        if do_flip:
+            image = TF.hflip(image)
+            # Flip boxes: for center format [cx, cy, w, h], new cx = 1 - cx
+            boxes = [[1.0 - cx, cy, w, h] for cx, cy, w, h in boxes]
+
+        # 3. Color jitter (image only, doesn't affect boxes)
+        if self.color_jitter is not None:
+            image = self.color_jitter(image)
+
+        # 4. Convert image to tensor
+        image = TF.to_tensor(image)
+
+        # 5. Normalize image
+        image = TF.normalize(image, mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+
+        # 6. Convert boxes to tensor
+        if len(boxes) > 0:
+            boxes = torch.tensor(boxes, dtype=torch.float32)
+        else:
+            boxes = torch.empty((0, 4), dtype=torch.float32)
+
+        return image, boxes
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a sample from the dataset.
+
+        Args:
+            idx: Sample index
+
+        Returns:
+            Dictionary with image, boxes, labels, and task_type
+        """
         img_id = self.image_ids[idx]
         img_info = self.image_id_to_info[img_id]
 
@@ -98,9 +170,6 @@ class DetectionDataset(BaseDataset):
 
         # Get original size
         orig_width, orig_height = image.size
-
-        # Transform image
-        image = self.transform(image)
 
         # Get annotations for this image
         annotations = self.image_annotations.get(img_id, [])
@@ -129,13 +198,15 @@ class DetectionDataset(BaseDataset):
                 boxes.append([center_x, center_y, w_norm, h_norm])
                 labels.append(class_idx)
 
-        # Convert to tensors
-        if len(boxes) > 0:
-            boxes = torch.tensor(boxes, dtype=torch.float32)
-            labels = torch.tensor(labels, dtype=torch.long)
-        else:
-            # No objects in image - return empty tensors
-            self.__getitem__(random.ranint(0, len(self)-1))
+        # Handle images with no annotations
+        if len(boxes) == 0:
+            return self.__getitem__(random.randint(0, len(self) - 1))
+
+        # Apply paired transforms to image and boxes
+        image, boxes = self._apply_paired_transforms(image, boxes)
+
+        # Convert labels to tensor
+        labels = torch.tensor(labels, dtype=torch.long)
 
         return {
             'image': image,

@@ -4,6 +4,8 @@ Base dataset class with common functionality for all task-specific datasets.
 
 import os
 import random
+from typing import List, Tuple, Optional, Any
+
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -17,8 +19,15 @@ class BaseDataset(Dataset):
     - Image loading utilities
     """
 
-    def __init__(self, data_root, split='train', transform=None, val_split=0.2,
-                 random_seed=42, image_size=256):
+    def __init__(
+        self,
+        data_root: str,
+        split: str = 'train',
+        transform: Optional[Any] = None,
+        val_split: float = 0.2,
+        random_seed: int = 42,
+        image_size: int = 256
+    ) -> None:
         """
         Args:
             data_root: Root directory containing task-specific folder
@@ -28,6 +37,8 @@ class BaseDataset(Dataset):
             random_seed: Random seed for reproducible splitting (default: 42)
             image_size: Target image size (default: 256)
         """
+        if split not in ('train', 'val'):
+            raise ValueError(f"split must be 'train' or 'val', got '{split}'")
         self.data_root = data_root
         self.split = split
         self.val_split = val_split
@@ -40,7 +51,7 @@ class BaseDataset(Dataset):
         else:
             self.transform = transform
 
-    def _get_default_transforms(self, split):
+    def _get_default_transforms(self, split: str) -> transforms.Compose:
         """
         Get default transforms for train or validation.
 
@@ -72,7 +83,7 @@ class BaseDataset(Dataset):
                     std=[0.229, 0.224, 0.225])
             ])
 
-    def _split_data(self, data_list):
+    def _split_data(self, data_list: List[Any]) -> List[Any]:
         """
         Split data into train/val sets.
 
@@ -93,7 +104,7 @@ class BaseDataset(Dataset):
         else:  # 'val'
             return shuffled_data[split_idx:]
 
-    def _split_data_stratified(self, data_list, labels):
+    def _split_data_stratified(self, data_list: List[Any], labels: List[int]) -> List[Any]:
         """
         Split data into train/val sets with stratified sampling to maintain class balance.
 
@@ -142,7 +153,7 @@ class BaseDataset(Dataset):
         else:  # 'val'
             return val_data
 
-    def _load_image(self, image_path):
+    def _load_image(self, image_path: str) -> Image.Image:
         """
         Load and convert image to RGB.
 
@@ -154,7 +165,11 @@ class BaseDataset(Dataset):
         """
         return Image.open(image_path).convert('RGB')
 
-    def _get_image_files(self, directory, extensions=('.jpg', '.jpeg', '.png')):
+    def _get_image_files(
+        self,
+        directory: str,
+        extensions: Tuple[str, ...] = ('.jpg', '.jpeg', '.png')
+    ) -> List[str]:
         """
         Get list of image files from directory.
 
@@ -174,10 +189,10 @@ class BaseDataset(Dataset):
         ]
         return sorted(image_files)
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Must be implemented by child classes."""
         raise NotImplementedError
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Any:
         """Must be implemented by child classes."""
         raise NotImplementedError

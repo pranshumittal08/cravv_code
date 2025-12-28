@@ -4,6 +4,8 @@ Implements combined loss training and two-phase training.
 """
 
 import os
+from typing import Dict, List, Tuple, Optional, Any
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -13,7 +15,13 @@ from tqdm import tqdm
 
 from model import MultiTaskModel
 from data import SegmentationDataset, DetectionDataset, ClassificationDataset
-from utils import MultiTaskLoss, compute_seg_metrics, compute_det_metrics, compute_cls_metrics
+from utils import (
+    MultiTaskLoss,
+    compute_seg_metrics,
+    compute_det_metrics,
+    compute_cls_metrics,
+    decode_detections_batch
+)
 from config import Config
 
 # Optional wandb import
@@ -25,7 +33,7 @@ except ImportError:
     print("wandb not installed. Install with: pip install wandb")
 
 
-def collate_detection(batch):
+def collate_detection(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Custom collate function for detection batches."""
     images = torch.stack([item['image'] for item in batch])
     boxes = [item['boxes'] for item in batch]
@@ -38,7 +46,7 @@ def collate_detection(batch):
     }
 
 
-def create_data_loaders(config):
+def create_data_loaders(config: Config) -> Tuple[Tuple[DataLoader, ...], Tuple[DataLoader, ...]]:
     """Create data loaders for all three tasks (train and validation)."""
     # Segmentation datasets
     seg_dataset_train = SegmentationDataset(
@@ -138,8 +146,17 @@ def create_data_loaders(config):
     return train_loaders, val_loaders
 
 
-def train_epoch(model, seg_loader, det_loader, cls_loader,
-                criterion, optimizer, scaler, config, phase=1):
+def train_epoch(
+    model: nn.Module,
+    seg_loader: DataLoader,
+    det_loader: DataLoader,
+    cls_loader: DataLoader,
+    criterion: MultiTaskLoss,
+    optimizer: torch.optim.Optimizer,
+    scaler: GradScaler,
+    config: Config,
+    phase: int = 1
+) -> Dict[str, float]:
     """
     Train for one epoch using combined loss backpropagation.
 
@@ -147,7 +164,18 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
     updates the shared backbone and task-specific heads together.
 
     Args:
+        model: The multi-task model.
+        seg_loader: Segmentation data loader.
+        det_loader: Detection data loader.
+        cls_loader: Classification data loader.
+        criterion: Multi-task loss function.
+        optimizer: Optimizer.
+        scaler: Gradient scaler for mixed precision.
+        config: Configuration object.
         phase: 1 for phase 1 (backbone frozen), 2 for phase 2 (end-to-end)
+
+    Returns:
+        Dictionary with training losses.
     """
     model.train()
 
@@ -157,8 +185,8 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
     loss_cls_total = 0.0
 
     # Create iterators
-    if phase == 2:
-        seg_iter = iter(seg_loader)
+
+    seg_iter = iter(seg_loader)
     det_iter = iter(det_loader)
     cls_iter = iter(cls_loader)
 
@@ -170,12 +198,12 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
 
     for step in pbar:
         # Get batches from all tasks (restart iterator if exhausted)
-        if phase == 2:
-            try:
-                seg_batch = next(seg_iter)
-            except StopIteration:
-                seg_iter = iter(seg_loader)
-                seg_batch = next(seg_iter)
+
+        try:
+            seg_batch = next(seg_iter)
+        except StopIteration:
+            seg_iter = iter(seg_loader)
+            seg_batch = next(seg_iter)
 
         try:
             det_batch = next(det_iter)
@@ -189,10 +217,9 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
             cls_iter = iter(cls_loader)
             cls_batch = next(cls_iter)
 
-        if phase == 2:
-            # Move data to device
-            seg_images = seg_batch['image'].to(config.DEVICE)
-            seg_masks = seg_batch['mask'].to(config.DEVICE)
+        # Move data to device
+        seg_images = seg_batch['image'].to(config.DEVICE)
+        seg_masks = seg_batch['mask'].to(config.DEVICE)
 
         det_images = det_batch['image'].to(config.DEVICE)
         det_boxes = det_batch['boxes']
@@ -206,17 +233,13 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
 
         with autocast(device_type=device_type):
             # Forward pass for all tasks
-            if phase == 2:
-                seg_outputs = model(seg_images, task='seg')
+            seg_outputs = model(seg_images, task='seg')
             det_outputs = model(det_images, task='det')
             cls_outputs = model(cls_images, task='cls')
             # Compute individual losses
-            if phase == 2:
-                loss_seg = criterion.compute_seg_loss(
-                    seg_outputs['seg'], seg_masks, num_classes=config.NUM_SEG_CLASSES)
-            else:
-                loss_seg = torch.tensor(
-                    0, dtype=torch.float32, device=config.DEVICE)
+            loss_seg = criterion.compute_seg_loss(
+                seg_outputs['seg'], seg_masks, num_classes=config.NUM_SEG_CLASSES)
+
             loss_det = criterion.compute_det_loss(
                 det_outputs['det'],
                 targets={'boxes': det_boxes, 'labels': det_labels}
@@ -266,97 +289,17 @@ def train_epoch(model, seg_loader, det_loader, cls_loader,
     }
 
 
-def decode_detections(det_outputs, score_threshold=0.3, image_size=256):
-    """
-    Decode detection outputs to boxes, labels, and scores.
-
-    Args:
-        det_outputs: Detection outputs from model
-        score_threshold: Minimum score threshold
-        image_size: Input image size
-
-    Returns:
-        pred_boxes, pred_labels, pred_scores (lists per image)
-    """
-    import torch.nn.functional as F
-
-    batch_boxes = []
-    batch_labels = []
-    batch_scores = []
-
-    strides = [8, 16, 32]  # P3, P4, P5
-
-    for batch_idx in range(det_outputs['cls_logits'][0].shape[0]):
-        img_boxes = []
-        img_labels = []
-        img_scores = []
-
-        for scale_idx, stride in enumerate(strides):
-            # (num_classes+1, H, W)
-            cls_logits = det_outputs['cls_logits'][scale_idx][batch_idx]
-            # (4, H, W)
-            reg_preds = det_outputs['reg_preds'][scale_idx][batch_idx]
-            # (1, H, W)
-            centerness = det_outputs['centerness'][scale_idx][batch_idx]
-
-            # Get class probabilities (exclude background class 0)
-            cls_probs = torch.sigmoid(cls_logits[1:])  # (num_classes, H, W)
-            centerness_prob = torch.sigmoid(centerness.squeeze(0))  # (H, W)
-
-            # Combine with centerness
-            combined_scores = cls_probs * centerness_prob.unsqueeze(0)
-
-            # Get max score and class per location
-            max_scores, max_classes = combined_scores.max(dim=0)  # (H, W)
-
-            # Filter by threshold
-            mask = max_scores > score_threshold
-
-            if mask.sum() > 0:
-                # Get locations
-                y_coords, x_coords = torch.where(mask)
-
-                for y, x in zip(y_coords, x_coords):
-                    # Get box (l, t, r, b) -> convert to (cx, cy, w, h)
-                    l, t, r, b = reg_preds[:, y, x].cpu().numpy()
-
-                    # Convert from distances to box coordinates
-                    loc_x = (x.item() + 0.5) * stride
-                    loc_y = (y.item() + 0.5) * stride
-
-                    x1 = loc_x - l * stride
-                    y1 = loc_y - t * stride
-                    x2 = loc_x + r * stride
-                    y2 = loc_y + b * stride
-
-                    # Convert to normalized (cx, cy, w, h)
-                    cx = ((x1 + x2) / 2) / image_size
-                    cy = ((y1 + y2) / 2) / image_size
-                    w = (x2 - x1) / image_size
-                    h = (y2 - y1) / image_size
-
-                    # Clamp to valid range
-                    cx = np.clip(cx, 0, 1)
-                    cy = np.clip(cy, 0, 1)
-                    w = np.clip(w, 0, 1)
-                    h = np.clip(h, 0, 1)
-
-                    img_boxes.append([cx, cy, w, h])
-                    img_labels.append(max_classes[y, x].item())
-                    img_scores.append(max_scores[y, x].item())
-
-        batch_boxes.append(np.array(img_boxes)
-                           if img_boxes else np.zeros((0, 4)))
-        batch_labels.append(np.array(img_labels)
-                            if img_labels else np.zeros(0))
-        batch_scores.append(np.array(img_scores)
-                            if img_scores else np.zeros(0))
-
-    return batch_boxes, batch_labels, batch_scores
-
-
-def validate(model, seg_loader, det_loader, cls_loader, criterion, config,
-             cls_idx_to_class=None, det_class_names=None, num_det_classes=None):
+def validate(
+    model: nn.Module,
+    seg_loader: DataLoader,
+    det_loader: DataLoader,
+    cls_loader: DataLoader,
+    criterion: MultiTaskLoss,
+    config: Config,
+    cls_idx_to_class: Optional[Dict[int, str]] = None,
+    det_class_names: Optional[List[str]] = None,
+    num_det_classes: Optional[int] = None
+) -> Dict[str, Any]:
     """Validate the model on all three tasks with per-class metrics."""
     model.eval()
 
@@ -401,9 +344,15 @@ def validate(model, seg_loader, det_loader, cls_loader, criterion, config,
             )
             total_loss += config.WEIGHT_DET * loss_det.item()
 
-            # Decode predictions
-            pred_boxes, pred_labels, pred_scores = decode_detections(
-                outputs['det'], score_threshold=0.3, image_size=config.IMAGE_SIZE)
+            # Decode predictions using shared utility function
+            pred_boxes, pred_labels, pred_scores = decode_detections_batch(
+                outputs['det'],
+                score_threshold=config.DETECTION_SCORE_THRESHOLD,
+                image_size=config.IMAGE_SIZE,
+                strides=config.FPN_STRIDES,
+                normalize_coords=True,
+                apply_nms_filter=True
+            )
 
             all_det_pred_boxes.extend(pred_boxes)
             all_det_pred_labels.extend(pred_labels)
@@ -479,7 +428,13 @@ def validate(model, seg_loader, det_loader, cls_loader, criterion, config,
     return results
 
 
-def init_wandb(config, num_det_classes, num_cls_classes, det_class_names, cls_idx_to_class):
+def init_wandb(
+    config: Config,
+    num_det_classes: int,
+    num_cls_classes: int,
+    det_class_names: List[str],
+    cls_idx_to_class: Dict[int, str]
+) -> Optional[Any]:
     """Initialize Weights & Biases logging."""
     if not WANDB_AVAILABLE or not config.USE_WANDB:
         return None
@@ -507,7 +462,7 @@ def init_wandb(config, num_det_classes, num_cls_classes, det_class_names, cls_id
         return None
 
 
-def log_wandb(metrics, step=None, prefix=""):
+def log_wandb(metrics: Dict[str, Any], step: Optional[int] = None, prefix: str = "") -> None:
     """Log metrics to wandb if available."""
     if not WANDB_AVAILABLE or wandb.run is None:
         return
@@ -530,9 +485,27 @@ def log_wandb(metrics, step=None, prefix=""):
     wandb.log(log_dict, step=step)
 
 
-def main():
+def main() -> None:
     """Main training function."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Train multi-task model')
+    parser.add_argument('--data_root', type=str, default=None,
+                        help='Path to dataset root directory (default: from config)')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                        help='Directory to save checkpoints (default: from config)')
+    args = parser.parse_args()
+
     config = Config()
+
+    # Override config with command-line arguments if provided
+    if args.data_root:
+        Config.DATA_ROOT = args.data_root
+        print(f"Using data root: {args.data_root}")
+    if args.checkpoint_dir:
+        Config.CHECKPOINT_DIR = args.checkpoint_dir
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
+        print(f"Using checkpoint directory: {args.checkpoint_dir}")
 
     # Save config at the start of training
     config_path = config.save()
@@ -570,7 +543,8 @@ def main():
         num_seg_classes=config.NUM_SEG_CLASSES,
         num_det_classes=num_det_classes,
         num_cls_classes=num_cls_classes,
-        pretrained_backbone=True
+        pretrained_backbone=True,
+        fpn_channels=config.FPN_CHANNELS,
     )
     model = model.to(config.DEVICE)
 
@@ -578,7 +552,8 @@ def main():
     criterion = MultiTaskLoss(
         weight_seg=config.WEIGHT_SEG,
         weight_det=config.WEIGHT_DET,
-        weight_cls=config.WEIGHT_CLS
+        weight_cls=config.WEIGHT_CLS,
+        fpn_strides=config.FPN_STRIDES
     )
 
     # Optimizer
@@ -606,7 +581,7 @@ def main():
             'cls_idx_to_class': cls_idx_to_class
         }
         torch.save(checkpoint, best_model_path)
-        print(f"  ✓ Saved best model (val_loss: {val_loss:.4f})")
+        print(f"Saved best model (val_loss: {val_loss:.4f})")
 
     # Phase 1: Freeze backbone
     print("\n=== Phase 1: Training FPN + Heads (Backbone Frozen) ===")

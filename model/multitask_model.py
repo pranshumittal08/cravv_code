@@ -2,6 +2,8 @@
 Multi-task model combining backbone, FPN, and three task heads.
 """
 
+from typing import Dict, Optional
+
 import torch
 import torch.nn as nn
 from .backbone import ResNetBackbone
@@ -19,17 +21,21 @@ class MultiTaskModel(nn.Module):
     3. Classification: Cooking state classification
     """
 
-    def __init__(self,
-                 num_seg_classes=4,
-                 num_det_classes=3,
-                 num_cls_classes=10,
-                 pretrained_backbone=True):
+    def __init__(
+        self,
+        num_seg_classes: int = 4,
+        num_det_classes: int = 3,
+        num_cls_classes: int = 10,
+        pretrained_backbone: bool = True,
+        fpn_channels: int = 256,
+    ) -> None:
         """
         Args:
             num_seg_classes: Number of segmentation classes (default: 4)
             num_det_classes: Number of detection classes (default: 3)
             num_cls_classes: Number of classification classes (default: 10)
             pretrained_backbone: Whether to use pretrained ResNet-50 (default: True)
+            fpn_channels: Number of channels in FPN/BiFPN (default: 256)
         """
         super(MultiTaskModel, self).__init__()
 
@@ -42,13 +48,17 @@ class MultiTaskModel(nn.Module):
 
         # Task heads
         self.seg_head = SegmentationHead(
-            in_channels=256, num_classes=num_seg_classes)
+            in_channels=fpn_channels, num_classes=num_seg_classes)
         self.det_head = DetectionHead(
-            in_channels=256, num_classes=num_det_classes)
+            in_channels=fpn_channels, num_classes=num_det_classes)
         self.cls_head = ClassificationHead(
             in_channels=2048, num_classes=num_cls_classes)
 
-    def forward(self, x, task=None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        task: Optional[str] = None
+    ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the multi-task model.
 
@@ -57,9 +67,14 @@ class MultiTaskModel(nn.Module):
             task: Optional task identifier ('seg', 'det', 'cls', or None for all)
 
         Returns:
-            If task is None: Dictionary with all three task outputs
-            If task is specified: Only the output for that task
+            Dictionary with requested task outputs
+
+        Raises:
+            ValueError: If task is not one of 'seg', 'det', 'cls', or None
         """
+        if task is not None and task not in ('seg', 'det', 'cls'):
+            raise ValueError(
+                f"task must be 'seg', 'det', 'cls', or None, got '{task}'")
         # Extract backbone features
         c2, c3, c4, c5 = self.backbone(x)
 
@@ -78,18 +93,14 @@ class MultiTaskModel(nn.Module):
         if task is None or task == 'cls':
             outputs['cls'] = self.cls_head(c5)
 
-        # Return single output if task is specified, otherwise return dict
-        # if task is not None and task in outputs:
-        #     return outputs[task]
-
         return outputs
 
-    def freeze_backbone(self):
+    def freeze_backbone(self) -> None:
         """Freeze backbone parameters for phase 1 training."""
         for param in self.backbone.parameters():
             param.requires_grad = False
 
-    def unfreeze_backbone(self):
+    def unfreeze_backbone(self) -> None:
         """Unfreeze backbone parameters for phase 2 training."""
         for param in self.backbone.parameters():
             param.requires_grad = True

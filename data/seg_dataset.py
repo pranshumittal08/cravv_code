@@ -5,6 +5,8 @@ Loads RGB images and corresponding masks.
 
 import os
 import random
+from typing import Dict, Any, Optional, Tuple
+
 from PIL import Image
 import torch
 from torchvision import transforms
@@ -28,8 +30,15 @@ class SegmentationDataset(BaseDataset):
                 ...
     """
 
-    def __init__(self, data_root, split='train', transform=None, val_split=0.2,
-                 random_seed=42, image_size=256):
+    def __init__(
+        self,
+        data_root: str,
+        split: str = 'train',
+        transform: Optional[Any] = None,
+        val_split: float = 0.2,
+        random_seed: int = 42,
+        image_size: int = 256,
+    ) -> None:
         """
         Args:
             data_root: Root directory containing 'segmentation' folder
@@ -73,10 +82,14 @@ class SegmentationDataset(BaseDataset):
             std=[0.229, 0.224, 0.225]
         )
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.image_files)
 
-    def _apply_paired_transforms(self, image, mask):
+    def _apply_paired_transforms(
+        self,
+        image: Image.Image,
+        mask: Image.Image
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply transforms to both image and mask with spatial consistency.
         Geometric transforms are applied to both; color transforms only to image.
@@ -105,7 +118,16 @@ class SegmentationDataset(BaseDataset):
 
         return image, mask
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a sample from the dataset.
+
+        Args:
+            idx: Sample index
+
+        Returns:
+            Dictionary with image, mask, and task_type
+        """
         # Load image
         img_name = self.image_files[idx]
         img_path = os.path.join(self.images_dir, img_name)
