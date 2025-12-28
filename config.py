@@ -45,7 +45,7 @@ class Config:
     # ========== Training ==========
     BATCH_SIZE: int = 16
     NUM_EPOCHS_PHASE1: int = 0  # Freeze backbone
-    NUM_EPOCHS_PHASE2: int = 1  # End-to-end training
+    NUM_EPOCHS_PHASE2: int = 40  # End-to-end training
     LR_PHASE1: float = 1e-3
     LR_PHASE2: float = 1e-4
     LR_GAMMA: float = 0.95
