@@ -53,7 +53,7 @@ class Config:
     # Loss weights
     WEIGHT_SEG: float = 1.0
     WEIGHT_DET: float = 1.0
-    WEIGHT_CLS: float = 0.5
+    WEIGHT_CLS: float = 2.0
 
     # Focal loss parameters (for imbalanced classification)
     # Use focal loss for classification (sigmoid-based)

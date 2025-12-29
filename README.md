@@ -48,7 +48,7 @@ Three Task Heads (parallel)
 ### Multi-Task Loss
 
 ```
-L_total = 1.0 * L_seg + 1.0 * L_det + 0.5 * L_cls
+L_total = 1.0 * L_seg + 1.0 * L_det + 2.0 * L_cls
 ```
 
 ## Dataset Structure
@@ -241,7 +241,7 @@ LR_PHASE2 = 1e-4
 # Loss weights
 WEIGHT_SEG = 1.0
 WEIGHT_DET = 1.0
-WEIGHT_CLS = 0.5
+WEIGHT_CLS = 2.0
 
 # Focal loss
 USE_FOCAL_LOSS = True
